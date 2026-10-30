@@ -1,0 +1,6 @@
+Ticker,Sub_ETF,Price,ATR_%,10D_Ret_%,SubETF_10D_%,Vs_SubETF_10D_%,RSI_14,Vs_50SMA_%,Vs_100SMA_%,Upside_20D_High_%,Inst_Footprint,Entry_Timing,Hard_Stop_Price,Early_Target_Price,Rev_Growth_%,Target_Upside_%,Earnings_Date,Hold_Days,Exit_Date,Beats_4Q,Avg_Surp_%,Math_Score_70
+CSCO,XLK,106.71,3.0,-9.52,-8.19,-1.33,40.7,-3.6,-6.4,11.2,Neutral,Day1_Turn,101.97,115.67,17.6,27.6,2026-11-12,14,2026-11-09,4/4,2.56,57
+BEN,KBE,31.24,2.7,-3.7,0.7,-4.4,41.4,-5.1,-4.5,7.1,Quiet_DryUp,Day1_Turn,29.96,32.9,14.3,13.5,2026-11-06,10,2026-11-03,4/4,19.62,56
+ANET,XLK,181.19,4.6,-15.87,-8.19,-7.68,36.5,-8.5,-1.9,20.0,Neutral,Knife_Wait,168.62,208.36,37.7,34.4,2026-11-03,7,2026-10-29,4/4,9.02,52
+DOC,XLRE,18.76,2.4,-0.73,3.11,-3.84,39.9,-6.3,-8.0,10.7,Quiet_DryUp,Day1_Turn,18.09,20.27,11.1,19.4,2026-11-02,6,2026-10-28,3/4,54.48,51
+AMD,SMH,534.74,5.1,-17.66,-13.62,-4.04,39.8,-0.9,1.6,23.1,Neutral,Knife_Wait,493.69,627.58,50.1,19.0,2026-11-03,7,2026-10-29,4/4,6.67,49

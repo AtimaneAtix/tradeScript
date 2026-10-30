@@ -1,0 +1,6 @@
+Ticker,Sub_ETF,Price,ATR_%,10D_Ret_%,SubETF_10D_%,Vs_SubETF_10D_%,RSI_14,Vs_50SMA_%,Vs_100SMA_%,Upside_20D_High_%,Inst_Footprint,Trigger_Status,Hard_Stop_Price,Early_Target_Price,Rev_Growth_%,Target_Upside_%,Analyst_21D,Earnings_Date,Hold_Days,Exit_Date,Beats_4Q,Avg_Surp_%,Setup_Score_70
+AMD,SMH,552.72,5.0,-14.42,-10.93,-3.49,45.1,2.1,4.9,19.1,Neutral,Day1_Turn,511.22,632.07,50.1,15.4,PT_Hike(Susquehann:$620); PT_Hike(Citigroup:$800),2026-11-03,6,2026-10-29,4/4,6.67,63
+ETN,XLI,393.94,3.9,-8.67,0.28,-8.95,39.4,-6.2,-5.1,14.7,Neutral,Day1_Turn,370.76,437.49,21.4,23.2,PT_Hike(RBC Capita:$526); PT_Hike(Citigroup:$498),2026-11-03,6,2026-10-29,4/4,1.53,55
+LITE,XLK,850.7,8.0,-23.43,-6.37,-17.06,41.1,-8.7,-2.6,34.4,Neutral,Stabilizing,748.54,1069.93,109.3,38.8,PT_Hike(Jefferies:$1250); PT_Hike(Stifel:$1232),2026-11-05,8,2026-11-02,4/4,9.77,54
+ANET,XLK,184.33,4.6,-14.59,-6.37,-8.22,39.6,-6.8,-0.3,17.9,Neutral,Stabilizing,171.51,209.14,37.7,32.1,PT_Cut_Hold(TD Cowen:$250->$205); PT_Hike(Citigroup:$248),2026-11-03,6,2026-10-29,4/4,9.02,47
+CSCO,XLK,107.26,2.9,-8.63,-6.37,-2.26,42.1,-2.9,-5.8,10.6,Neutral,Day1_Turn,102.62,115.8,17.6,26.9,Maintained,2026-11-12,13,2026-11-09,4/4,2.56,46
