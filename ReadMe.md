@@ -164,7 +164,8 @@ rejects and audit logs exist so these parts can be judged on live data over time
 
 ## 8. Version History
 
-See the changelog comments at the bottom of `scanner.py` (v4.6 → v4.10).
+The latest version's changes are noted at the bottom of `scanner.py`. Earlier versions
+(v4.7 fixes, v4.8 trade plan, v4.9 scoring) are described in the git commit history.
 
 ---
 

@@ -1058,56 +1058,12 @@ def run_scanner(
 if __name__ == "__main__":
   run_scanner()
 
-# scanner v4.6 - Latest: 14 days to 21 days update.
-# scanner v4.7 - Stress-test fixes:
-#   - Nasdaq-100 source moved to "List of NASDAQ-100 companies" (ICB -> GICS); the old
-#     page had no constituent table, so ARM/ASML/MELI/PDD/SHOP etc. were never scanned.
-#   - Sub-ETF mapping: gas/oil -> XOP only for Energy (Industrial Gases -> XLB, Gas
-#     Utilities -> XLU); Retail REITs -> XLRE; Financial Exchanges -> XLF; Pharma and
-#     Life Sciences Tools -> XLV (only Biotechnology -> XBI). Cached Sub_ETF recomputed.
-#   - infer_sector_from_sub uses word-start matching ("credit" no longer = IT).
-#   - Failed-ticker retry now actually writes data back (single ticker was a silent no-op).
-#   - Analyst_21D: negative events listed first (+N more), standing Sell/Underweight
-#     labelled Sell_Rating instead of Downgrade, PT=0 treated as missing, firm dedupe on
-#     full name, added Accumulate/Top Pick/Sector Weight/Market Weight/Perform/Mixed,
-#     grade dates converted UTC -> New York, fetch errors shown as "Error" not "Quiet".
-#   - Silent failures now visible: regime UNKNOWN instead of fake GREEN/16, BW_Overlap
-#     "Unverified" when bellwether dates missing, technical-loop errors listed.
-#   - ETF/SPY 10D returns drop the same pre-market zero-volume candle as stocks.
-#   - Warning when run during market hours (partial daily candle).
-#   - 20D high now uses 20 bars (was 21). Version in banner/filename/messages = v4.7.
-#   - Not changed by design: exit dates skip weekends only (holidays handled manually).
-# scanner v4.8 - Trade plan from 10-year backtest (research/trade_plan.py, 3,844 trades):
-#   - Hard stop widened 1.5 -> 2.5 ATR (STOP_ATR_MULT). Same return per unit of risk,
-#     far fewer noise stop-outs (47% -> 27%), smoother results.
-#   - Fixed profit target removed (Early_Target_Price / Reward_% / RR_Ratio dropped): the
-#     75%-to-20D-high target capped winners and lowered returns in every tested variant.
-#     Plan is now: hold to Exit_Date close unless the hard stop is hit.
-#   - New column Pos_%_per_1%_Risk = position size (% of account) when risking 1%.
-#   - Exit day is a constant (EXIT_BDAYS_BEFORE_ER = 3; 2 = T-2 is the closest allowed).
-#   Backtest, same signals: +0.039R per trade vs the v4.7 plan (2.4 SE), better in 8/12
-#   years; equal-money avg per trade +0.49% -> +1.09%.
-# scanner v4.9 - Scoring re-derived from data (research/scoring_test.py):
-#   - Old P1 (SMA proximity + upside) and P2 (sector context + Inst_Footprint) did not rank
-#     trades; in 2023-26 the old score's top picks did WORSE than the rest (-0.12R).
-#   - New P1_Tech_24 = RSI_14 (lower better) + Mom_6M_% (lower better), 12/8/4 each.
-#     New P2_SecFlow_22 = SubETF_10D_% (lower better) 11/7/3 + Trigger Knife_Wait 11, else 3.
-#   - Features and cut-offs chosen mechanically on 2016-22 only, tested once on 2023-26:
-#     top-2 per week beat the rest by +0.20R (2016-22: +0.28R). Equal weights.
-#   - P3 (beats/surprise/revenue/target) and Analyst_Mod unchanged (no history to test).
-#   - Average Setup_Score_70 kept ~equal to before so the SKILL.md tiers keep their meaning.
-#   - New column Mom_6M_% (return from t-126 to t-21). Inst_Footprint/CMF stay as info only.
-#   - Stored v4.4-v4.8 CSV scores are not comparable with v4.9 scores.# scanner v4.10 - Checked the parts the price backtest could not (research/components_test.py,
-#   analyst history 2015-26 with split-adjusted targets, point-in-time):
-#   - Analyst_Mod, target-upside points and the >= 5% target gate: no problem found
-#     (weakly positive, never harmful) -> unchanged.
-#   - EPS-cut filter: rejected stocks on rounding-level revisions (live check: 5 of 7
-#     rejections were cuts < 1%). Now needs a >= 1% relative cut (EPS_CUT_MIN_PCT), or
-#     >= 1 cent when the estimate is ~0. Judgment fix: no estimate history exists to test it.
-#   - New rejects_<version>_<date>.csv: every stage-2 rejection with reason and values, so
-#     the filters can be judged on live data later (research/tracker.py).
-#   - Growth/Target drops now split "data missing" from "failed threshold".
+# scanner v4.10 - Latest:
+#   - EPS-cut filter: a stock is rejected only for a >= 1% cut in this quarter's EPS
+#     estimate over 30 days (EPS_CUT_MIN_PCT), or >= 1 cent when the estimate is ~0.
+#     The old rule rejected stocks on rounding-level revisions.
+#   - New rejects_v4_10_<date>.csv: every stage-2 rejection with its reason and values.
+#   - Filter breakdown splits Growth/Target drops into "data missing" vs "failed threshold".
 #   - New column EPS_0q_Chg_% (30-day change of the current-quarter EPS estimate).
-#   - Revenue growth (SEC filings, point-in-time, matches Yahoo within 1pp for 90% of
-#     stocks): no measurable effect on these trades. The > 0 gate and Rev points stay
-#     unchanged (rejected stocks did slightly better, but within noise).
+#   - Analyst_Mod, target upside and revenue growth were backtested point-in-time and
+#     left unchanged (no harm found). Earlier version notes: see git history.
