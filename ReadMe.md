@@ -89,12 +89,24 @@ P1/P2 cut-offs were derived mechanically on 2016–22 data and validated once on
 
 ---
 
-## 5. Daily Workflow
+## 5. Setup & Daily Workflow
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+git clone https://github.com/AtimaneAtix/tradeScript.git
+cd tradeScript
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python scanner.py          # best pre-market or after the US close
+```
+
+To update later: `git pull`. Your own outputs (`candidates_*`, `rejects_*`, `audit_*`,
+`universe_cache.csv`) are git-ignored, so pulling never conflicts with your runs.
+
+```text
+scanner.py         daily scanner (all rules, scoring and trade plan)
+SKILL.md           30-point web-audit instructions for an LLM (Claude, Gemini, ...)
+requirements.txt   pinned dependencies
+research/          backtests and trackers (optional; data is downloaded locally)
 ```
 
 1. The scanner writes `candidates_v4_10_<date>.csv` and `rejects_v4_10_<date>.csv`.
@@ -117,6 +129,7 @@ python scanner.py          # best pre-market or after the US close
 | `scoring.py`, `scoring_test.py` | Feature tests and the frozen in-sample → out-of-sample scoring rule |
 | `components_test.py` | Analyst, target, revenue, bellwether and hold-window tests |
 | `old_vs_new.py` | Portfolio simulation: original v4.4/4.6 workflow vs current |
+| `revenue_gate_test.py` | Portfolio with/without the revenue and target gates, plus a random-removal noise check |
 | `compare_live.py`, `tracker.py` | Replays the real daily CSVs (and rejects/audit logs) against prices |
 
 ---
@@ -132,7 +145,15 @@ python scanner.py          # best pre-market or after the US close
   similar CAGR with a higher Sharpe (0.86) and a smaller drawdown. Stock selection still
   largely tracks the market; bad market years (2018, 2022) lose money.
 * Revenue growth, beats/surprise and a bellwether merely reporting in the window showed no
-  measurable effect. Analyst modifier and target upside were weakly positive.
+  measurable effect. Analyst modifier and target upside were weakly positive. The revenue
+  gate is kept: in the portfolio it behaves like removing a random 18% of candidates.
+* Portfolio Sharpe has about ±0.1 noise from position-slot order alone, so only large
+  differences (like old vs new) are meaningful at portfolio level.
+
+To run the research scripts: `python research/fetch_data.py` first (about 15 minutes),
+then e.g. `python research/analyze.py`. Revenue tests also need
+`SEC_USER_AGENT="your name your@email" python research/fetch_fundamentals.py --sec-only`
+(the SEC requires a contact in the request header).
 
 **Limits:** the universe is today's index members (delisted losers missing), the backtest
 uses actual earnings dates (live uses estimates), the EPS-cut filter and the web audit

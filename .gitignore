@@ -1,5 +1,14 @@
+# Python / tooling
 .venv/
-.DS_Store
-.claude/
 __pycache__/
 *.pyc
+.DS_Store
+.claude/
+settings.local.json
+
+# Per-user scanner outputs (each user's own runs stay local)
+candidates_*.csv
+rejects_*.csv
+audit_*.csv
+universe_cache.csv
+custom_tickers.txt
