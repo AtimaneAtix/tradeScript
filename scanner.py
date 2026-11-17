@@ -1,6 +1,6 @@
-import datetime as dt
 import io
 import os
+import re
 import time
 import warnings
 
@@ -29,9 +29,27 @@ SECTOR_ETF_MAP = {
     "Materials": "XLB",
 }
 
+# Nasdaq-100 Wikipedia sayfası ICB sınıflandırması kullanır -> GICS ana sektörüne çeviri
+ICB_TO_GICS_SECTOR = {
+    "Technology": "Information Technology",
+    "Telecommunications": "Communication Services",
+    "Health Care": "Health Care",
+    "Financials": "Financials",
+    "Real Estate": "Real Estate",
+    "Consumer Discretionary": "Consumer Discretionary",
+    "Consumer Staples": "Consumer Staples",
+    "Industrials": "Industrials",
+    "Basic Materials": "Materials",
+    "Energy": "Energy",
+    "Utilities": "Utilities",
+}
+
+SCANNER_VERSION = "v4.7"
 BELLWETHERS = ["MSFT", "AAPL", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
 CACHE_FILE = "universe_cache.csv"
 CUSTOM_TICKERS_FILE = "custom_tickers.txt"
+SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+NDX_URL = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
 
 
 def clean_str(val):
@@ -42,67 +60,51 @@ def clean_str(val):
   return "" if s in ["nan", "none", "null"] else s
 
 
+def _has_word(text, words):
+  """Kelime başında eşleşme: 'it' -> 'credit' içinde, 'gas' -> 'las vegas' içinde yakalanmaz."""
+  return any(re.search(r"\b" + re.escape(w), text) for w in words)
+
+
 def infer_sector_from_sub(sub_industry):
-  """S&P 500 dışı Nasdaq-100 hisseleri için doğru ana GICS sektörünü tahmin eder."""
+  """ICB sektörü bulunamayan Nasdaq-100 / özel hisseler için ana GICS sektörünü tahmin eder (yedek)."""
   sub = str(sub_industry).lower()
-  if any(
-      w in sub
-      for w in [
-          "tech",
-          "software",
-          "semiconductor",
-          "computer",
-          "electronic",
-          "hardware",
-          "it ",
-      ]
+  # Önce çakışmaya açık özel ifadeler (sıra önemli)
+  if _has_word(sub, ["reit", "real estate"]):
+    return "Real Estate"
+  if _has_word(sub, ["industrial gas", "chemical", "material", "mining", "metal"]):
+    return "Materials"
+  if _has_word(sub, ["gas utilit", "multi-utilit", "utilit", "water utilit"]):
+    return "Utilities"
+  if re.search(r"\bit\b", sub) or _has_word(
+      sub, ["tech", "software", "semiconductor", "computer", "electronic", "hardware"]
   ):
     return "Information Technology"
-  if any(
-      w in sub
-      for w in ["health", "biotech", "pharma", "medical", "life sciences"]
-  ):
+  if _has_word(sub, ["health", "biotech", "pharma", "medical", "life sciences"]):
     return "Health Care"
-  if any(
-      w in sub
-      for w in [
-          "retail",
-          "auto",
-          "travel",
-          "apparel",
-          "restaurant",
-          "hotel",
-          "consumer discretionary",
-          "e-commerce",
-      ]
+  if _has_word(
+      sub,
+      ["bank", "financ", "insurance", "investment", "credit", "payment",
+       "capital market", "exchange", "asset management"],
+  ):
+    return "Financials"
+  if _has_word(
+      sub,
+      ["retail", "auto", "travel", "apparel", "restaurant", "hotel", "casino",
+       "gaming", "leisure", "consumer discretionary", "e-commerce"],
   ):
     return "Consumer Discretionary"
-  if any(
-      w in sub for w in ["food", "beverage", "household", "staple", "personal"]
-  ):
+  if _has_word(sub, ["food", "beverage", "soft drink", "household", "staple", "personal"]):
     return "Consumer Staples"
-  if any(
-      w in sub
-      for w in [
-          "industrial",
-          "aerospace",
-          "defense",
-          "machinery",
-          "transport",
-          "rail",
-      ]
+  if _has_word(
+      sub,
+      ["industrial", "aerospace", "defense", "machinery", "transport", "rail",
+       "electrical"],
   ):
     return "Industrials"
-  if any(w in sub for w in ["energy", "oil", "gas"]):
+  if _has_word(sub, ["energy", "oil", "gas"]):
     return "Energy"
-  if any(w in sub for w in ["utility", "utilities", "electric", "water"]):
+  if _has_word(sub, ["electric"]):
     return "Utilities"
-  if any(w in sub for w in ["bank", "financial", "insurance", "investment"]):
-    return "Financials"
-  if any(w in sub for w in ["real estate", "reit"]):
-    return "Real Estate"
-  if any(w in sub for w in ["chemical", "material", "mining", "metal"]):
-    return "Materials"
   return "Communication Services"
 
 
@@ -117,32 +119,17 @@ def map_subsector_etf(sector, sub_industry):
       or "data processing" in sub
   ):
     return "IGV"
-  if (
-      "communications equipment" in sub
-      or "electronic" in sub
-      or "hardware" in sub
-  ):
-    return "XLK"
-  if (
-      "biotechnology" in sub
-      or "life sciences" in sub
-      or "pharmaceutical" in sub
-  ):
+  if "biotechnology" in sub:
     return "XBI"
-  if (
-      "bank" in sub
-      or "asset management" in sub
-      or "brokerage" in sub
-      or "financial" in sub
-  ):
+  if "bank" in sub or "brokerage" in sub:
     return "KBE"
   if "aerospace" in sub or "defense" in sub:
     return "ITA"
   if "homebuilding" in sub or "building products" in sub:
     return "ITB"
-  if "oil" in sub or "gas" in sub:
+  if sector == "Energy" and ("oil" in sub or "gas" in sub):
     return "XOP"
-  if "retail" in sub:
+  if "retail" in sub and sector != "Real Estate":
     return "XRT"
   return SECTOR_ETF_MAP.get(sector, "SPY")
 
@@ -154,11 +141,7 @@ def get_us_universe():
 
   # Katman 1: Wikipedia'dan io.StringIO ile güvenli çekim
   try:
-    resp = requests.get(
-        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-        headers=headers,
-        timeout=15,
-    )
+    resp = requests.get(SP500_URL, headers=headers, timeout=15)
     sp_df = pd.read_html(io.StringIO(resp.text))[0]
     sp_df["Symbol"] = (
         sp_df["Symbol"].astype(str).str.replace(".", "-", regex=False)
@@ -175,41 +158,47 @@ def get_us_universe():
   except Exception as e:
     print(f"      [!] Wikipedia S&P 500 okuma uyarısı: {e}")
 
+  # Nasdaq-100: bileşen tablosu artık ayrı "List of NASDAQ-100 companies" sayfasında (ICB sınıflandırmalı)
+  ndx_added = 0
   try:
-    resp_ndx = requests.get(
-        "https://en.wikipedia.org/wiki/Nasdaq-100",
-        headers=headers,
-        timeout=15,
-    )
+    resp_ndx = requests.get(NDX_URL, headers=headers, timeout=15)
     tables = pd.read_html(io.StringIO(resp_ndx.text))
-    for tbl in tables:
-      if "Ticker" in tbl.columns or "Symbol" in tbl.columns:
-        col = "Ticker" if "Ticker" in tbl.columns else "Symbol"
-        sec_col = next(
-            (
-                c
-                for c in tbl.columns
-                if "Sector" in str(c) or "Industry" in str(c)
-            ),
-            None,
-        )
-        for _, row in tbl.iterrows():
-          sym = str(row[col]).replace(".", "-").strip()
-          if sym not in meta and sym.replace("-", "").isalpha():
-            sub = (
-                str(row[sec_col]).strip()
-                if sec_col and pd.notna(row[sec_col])
-                else "Information Technology"
-            )
-            sec = infer_sector_from_sub(sub)
-            meta[sym] = {
-                "Sector": sec,
-                "Sub_Industry": sub,
-                "Sub_ETF": map_subsector_etf(sec, sub),
-            }
-        break
+    tbl = next(
+        (
+            t
+            for t in tables
+            if ("Ticker" in t.columns or "Symbol" in t.columns) and len(t) >= 90
+        ),
+        None,
+    )
+    if tbl is None:
+      raise ValueError("bileşen tablosu (Ticker/Symbol, ~100 satır) bulunamadı")
+    col = "Ticker" if "Ticker" in tbl.columns else "Symbol"
+    ind_col = next((c for c in tbl.columns if "Industry" in str(c)), None)
+    sub_col = next(
+        (c for c in tbl.columns if "Subsector" in str(c) or "Sub-Industry" in str(c)),
+        None,
+    )
+    for _, row in tbl.iterrows():
+      sym = str(row[col]).replace(".", "-").strip().upper()
+      if sym in meta or not sym.replace("-", "").isalpha():
+        continue
+      industry = str(row[ind_col]).strip() if ind_col and pd.notna(row[ind_col]) else ""
+      sub = str(row[sub_col]).strip() if sub_col and pd.notna(row[sub_col]) else industry
+      sec = ICB_TO_GICS_SECTOR.get(industry) or infer_sector_from_sub(sub)
+      meta[sym] = {
+          "Sector": sec,
+          "Sub_Industry": sub,
+          "Sub_ETF": map_subsector_etf(sec, sub),
+      }
+      ndx_added += 1
   except Exception as e:
     print(f"      [!] Wikipedia Nasdaq-100 okuma uyarısı: {e}")
+  if ndx_added == 0:
+    print(
+        "      [!] Nasdaq-100 listesinden hiç ek hisse eklenmedi (sayfa yapısı"
+        " değişmiş olabilir)."
+    )
 
   # Katman 2: Başarılıysa yerel önbelleği (universe_cache.csv) güncelle; başarısızsa önbellekten oku
   if len(meta) >= 400:
@@ -225,10 +214,12 @@ def get_us_universe():
       cache_df = pd.read_csv(CACHE_FILE)
       for _, row in cache_df.iterrows():
         sym = str(row["Symbol"]).strip()
+        sec, sub = str(row["Sector"]), str(row["Sub_Industry"])
         meta[sym] = {
-            "Sector": str(row["Sector"]),
-            "Sub_Industry": str(row["Sub_Industry"]),
-            "Sub_ETF": str(row["Sub_ETF"]),
+            "Sector": sec,
+            "Sub_Industry": sub,
+            # Eski önbellekteki ETF eşlemesi güncel kurallarla yeniden hesaplanır
+            "Sub_ETF": map_subsector_etf(sec, sub),
         }
     except Exception as e:
       print(f"      [!] Önbellek okuma hatası: {e}")
@@ -251,9 +242,18 @@ def get_us_universe():
   return meta
 
 
+def drop_phantom_bar(df):
+  """Pre-market'te Yahoo'nun eklediği Volume=0 boş günlük mumu atar (VIX gibi hacimsiz seriler hariç)."""
+  if "Volume" in df.columns and len(df) > 1:
+    v = df["Volume"].fillna(0)
+    if float(v.iloc[-1]) == 0 and float(v.iloc[-2]) > 0:
+      return df.iloc[:-1]
+  return df
+
+
 def get_market_regime(data):
   try:
-    spy_c = data["SPY"]["Close"].dropna()
+    spy_c = drop_phantom_bar(data["SPY"].dropna(subset=["Close"]))["Close"]
     vix_c = data["^VIX"]["Close"].dropna()
     spy_price = float(spy_c.iloc[-1])
     spy_50 = float(spy_c.rolling(50).mean().iloc[-1])
@@ -265,8 +265,9 @@ def get_market_regime(data):
     elif vix_val >= 20.0 or spy_price < spy_50:
       regime = "YELLOW (Choppy / Selective)"
     return regime, vix_val
-  except Exception:
-    return "GREEN (Risk-On)", 16.0
+  except Exception as e:
+    print(f"      [!] Piyasa rejimi hesaplanamadı (SPY/^VIX verisi yok): {e}")
+    return "UNKNOWN (SPY/VIX data unavailable)", float("nan")
 
 
 def normalize_ny_dates(idx):
@@ -364,20 +365,37 @@ def get_bellwether_earnings(today_naive):
 def evaluate_analyst_21d(tk, today_naive, curr_price, target_upside_pct):
   """Büyüklüğe duyarlı (Magnitude-Weighted) ve kurum bazında netleştirilmiş 21D analist puanlaması."""
   try:
-    ud = tk.upgrades_downgrades
+    try:
+      ud = tk.upgrades_downgrades
+    except Exception as e:
+      # yfinance hiç geçmiş olmayan hisse için istisna fırlatır -> bu bir hata değil, sessizlik
+      if "no upgrade/downgrade history" in str(e).lower():
+        return 0, "Quiet"
+      raise
     if ud is None or ud.empty:
       return 0, "Quiet"
 
     ud = ud.copy()
     ud.index = pd.to_datetime(ud.index)
-    if ud.index.tz is not None:
-      ud.index = ud.index.tz_convert("America/New_York").tz_localize(None)
+    # yfinance GradeDate'i tz-naive UTC verir -> New York gününe çevir
+    if ud.index.tz is None:
+      ud.index = ud.index.tz_localize("UTC")
+    ud.index = ud.index.tz_convert("America/New_York").tz_localize(None)
     cutoff = today_naive - pd.Timedelta(days=21)
     recent = ud[ud.index >= cutoff].sort_index(ascending=False)
     if recent.empty:
       return 0, "Quiet"
 
-    buy_words = ["buy", "outperform", "overweight", "strong", "positive", "add"]
+    buy_words = [
+        "buy",
+        "outperform",
+        "overweight",
+        "strong",
+        "positive",
+        "add",
+        "accumulate",
+        "top pick",
+    ]
     sell_words = [
         "sell",
         "underperform",
@@ -395,29 +413,39 @@ def evaluate_analyst_21d(tk, today_naive, curr_price, target_upside_pct):
         "in-line",
         "inline",
         "peer perform",
+        "sector weight",
+        "market weight",
     ]
+    # Alt-string olarak aranamayacak notlar ("perform" -> "outperform" içinde de geçer)
+    hold_exact = {"perform", "mixed"}
 
     seen_firms = set()
     net_score = 0
     has_severe_bear = False
-    notes = []
+    events = []  # (event_pts, note)
 
-    for _, r in recent.iterrows():
+    for i, (_, r) in enumerate(recent.iterrows()):
       firm_raw = clean_str(r.get("Firm"))
-      firm = firm_raw.title()[:10] if firm_raw else "Firm"
-      # Aynı kurumun 21 gün içinde mükerrer kaydı varsa en güncelini (ilk satırı) baz al
-      if firm in seen_firms:
+      firm = firm_raw.title()[:10].strip() if firm_raw else "Firm"
+      # Tekilleştirme tam kurum adıyla; isimsiz satırlar birbirini ezmez
+      firm_key = firm_raw if firm_raw else f"_unnamed_{i}"
+      if firm_key in seen_firms:
         continue
-      seen_firms.add(firm)
+      seen_firms.add(firm_key)
 
       act = clean_str(r.get("Action"))
       to_g = clean_str(r.get("ToGrade"))
       from_g = clean_str(r.get("FromGrade"))
       cur_pt = pd.to_numeric(r.get("currentPriceTarget", np.nan), errors="coerce")
       pri_pt = pd.to_numeric(r.get("priorPriceTarget", np.nan), errors="coerce")
+      # Yahoo hedef verilmeyen satırlarda 0 yazar -> eksik veri say (sahte -%100 kesinti olmasın)
+      if pd.notna(cur_pt) and cur_pt <= 0:
+        cur_pt = np.nan
 
       active_grade = to_g if to_g else from_g
-      is_hold = any(w in active_grade for w in hold_words)
+      is_hold = active_grade in hold_exact or any(
+          w in active_grade for w in hold_words
+      )
       is_buy = (not is_hold) and (
           any(w in active_grade for w in buy_words)
           or (act == "main" and active_grade == "" and target_upside_pct >= 15.0)
@@ -425,31 +453,27 @@ def evaluate_analyst_21d(tk, today_naive, curr_price, target_upside_pct):
       is_sell = any(w in active_grade for w in sell_words)
 
       event_pts = 0
+      note = None
       if "down" in act or is_sell:
         event_pts = -7
         has_severe_bear = True
-        notes.append(f"Downgrade({firm})")
+        # Gerçek not düşürme ile mevcut Sell/Underweight notunun teyidi ayrı etiketlenir
+        note = f"Downgrade({firm})" if "down" in act else f"Sell_Rating({firm})"
       elif pd.notna(cur_pt) and pd.notna(pri_pt) and pri_pt > 0:
         pt_chg_pct = ((cur_pt - pri_pt) / pri_pt) * 100.0
         if cur_pt < pri_pt:
-          # Case A: Not 'Buy' VE yeni PT hala mevcut fiyatın >= %10 üzerinde -> Trim büyüklüğüne göre ceza
           if is_buy and (cur_pt >= curr_price * 1.10):
             if pt_chg_pct >= -5.0:
-              event_pts = -1  # Küçük ince ayar (-%5'ten az)
+              event_pts = -1
             elif pt_chg_pct >= -12.0:
-              event_pts = -3  # Standart değerleme düzeltmesi
+              event_pts = -3
             else:
-              event_pts = -5  # Sert hedef kesintisi (< -%12)
-            notes.append(
-                f"PT_Trim_Buy({firm}:${int(pri_pt)}->${int(cur_pt)}[{pt_chg_pct:.0f}%])"
-            )
-          # Case B: Not 'Hold/Neutral' VEYA yeni PT mevcut fiyatın %10'undan daha yakın
+              event_pts = -5
+            note = f"PT_Trim_Buy({firm}:${int(pri_pt)}->${int(cur_pt)}[{pt_chg_pct:.0f}%])"
           else:
             event_pts = -7 if pt_chg_pct <= -10.0 else -5
             has_severe_bear = True
-            notes.append(
-                f"PT_Cut_Hold({firm}:${int(pri_pt)}->${int(cur_pt)}[{pt_chg_pct:.0f}%])"
-            )
+            note = f"PT_Cut_Hold({firm}:${int(pri_pt)}->${int(cur_pt)}[{pt_chg_pct:.0f}%])"
         elif cur_pt > pri_pt:
           if pt_chg_pct >= 10.0:
             event_pts = 4
@@ -457,32 +481,37 @@ def evaluate_analyst_21d(tk, today_naive, curr_price, target_upside_pct):
             event_pts = 3
           else:
             event_pts = 1
-          notes.append(
-              f"PT_Hike({firm}:${int(pri_pt)}->${int(cur_pt)}[+{pt_chg_pct:.0f}%])"
-          )
+          note = f"PT_Hike({firm}:${int(pri_pt)}->${int(cur_pt)}[+{pt_chg_pct:.0f}%])"
       elif "up" in act or ("init" in act and is_buy):
         event_pts = 3
-        notes.append(f"Upgrade({firm})")
+        note = f"Upgrade({firm})" if "up" in act else f"Init_Buy({firm})"
 
       net_score += event_pts
+      if note:
+        events.append((event_pts, note))
 
-    if not notes:
+    if not events:
       return 0, "Maintained"
 
-    # Eğer doğrudan Downgrade veya Case B varsa pozitif puan almasını engelle; yoksa [-7, +3] aralığına oturt
     if has_severe_bear:
       final_mod = max(-7, min(-3, net_score))
     else:
       final_mod = max(-7, min(3, net_score))
 
-    return final_mod, "; ".join(notes[:2])
-  except Exception:
-    return 0, "Quiet"
+    # Önce olumsuz olaylar (en sert önce), sonra olumlu olaylar -> skoru düşüren olay asla gizlenmez
+    negatives = sorted([e for e in events if e[0] < 0], key=lambda e: e[0])
+    positives = sorted([e for e in events if e[0] >= 0], key=lambda e: -e[0])
+    ordered = [n for _, n in negatives + positives]
+    shown = ordered[:3]
+    if len(ordered) > 3:
+      shown.append(f"+{len(ordered) - 3} more")
+    return final_mod, "; ".join(shown)
+  except Exception as e:
+    return 0, f"Error({type(e).__name__})"
 
 
 def compute_setup_score_breakdown(row, analyst_mod):
   """Returns (P1_Tech_24, P2_SecFlow_22, P3_Fund_24, Setup_Score_70)."""
-  # Pillar 1: Technical Structure & Rebound Potential (Max 24 pts)
   v50, v100 = row["Vs_50SMA_%"], row["Vs_100SMA_%"]
   if v50 >= -3.5 and v100 >= -2.5:
     sma_pts = 12
@@ -504,12 +533,11 @@ def compute_setup_score_breakdown(row, analyst_mod):
     up_pts = 3
   p1_tech = sma_pts + up_pts
 
-  # Pillar 2: Sub-Sector Context & Institutional Flow (Max 22 pts)
   sub_ret, vs_sub = row["SubETF_10D_%"], row["Vs_SubETF_10D_%"]
   if sub_ret > -5.0 and -7.0 <= vs_sub <= -0.5:
     sec_pts = 12
   elif sub_ret <= -8.0 and (v50 >= -3.5 or v100 >= -2.5):
-    sec_pts = 10  # Oversold sector, but stock holds key SMA support
+    sec_pts = 10
   elif sub_ret > -9.0 and -9.0 <= vs_sub <= 1.0:
     sec_pts = 8
   else:
@@ -523,7 +551,6 @@ def compute_setup_score_breakdown(row, analyst_mod):
   )
   p2_secflow = sec_pts + flow_pts
 
-  # Pillar 3: Earnings Consistency, Growth & Analyst Revisions (Max 24 pts base + analyst_mod)
   beats_pts = 8 if row["Beats_4Q"] == "4/4" else 4
   surp_pts = (
       4
@@ -556,7 +583,18 @@ def run_scanner(
       pd.Timestamp.now(tz="America/New_York").tz_localize(None).normalize()
   )
   today_str = today_naive.strftime("%Y-%m-%d")
-  print(f"=== US PRE-EARNINGS DISLOCATION SCANNER v4.4 ({today_str}) ===")
+  print(
+      f"=== US PRE-EARNINGS DISLOCATION SCANNER {SCANNER_VERSION} ({today_str}) ==="
+  )
+
+  now_ny = pd.Timestamp.now(tz="America/New_York")
+  ny_minutes = now_ny.hour * 60 + now_ny.minute
+  if now_ny.weekday() < 5 and 570 <= ny_minutes < 960:
+    print(
+        "      [!] Piyasa şu an açık (09:30-16:00 ET): bugünün mumu henüz"
+        " tamamlanmadı; RSI/Trigger/CMF kısmi gün verisiyle hesaplanır."
+        " En temiz sonuç için pre-market veya kapanış sonrası çalıştırın."
+    )
 
   universe = get_us_universe()
   tickers = list(universe.keys())
@@ -579,18 +617,62 @@ def run_scanner(
       threads=True,
   )
 
+  # --- FAILED TICKERS SEQUENTIAL RETRY ---
+  failed_tickers = list(getattr(yf.shared, "_ERRORS", {}).keys())
+  if failed_tickers:
+    print(
+        f"      -> {len(failed_tickers)} hisse ilk denemede düşmedi, tek tek"
+        f" tekrar çekiliyor: {failed_tickers}"
+    )
+    time.sleep(2)
+    retry_data = yf.download(
+        failed_tickers,
+        period="1y",
+        interval="1d",
+        group_by="ticker",
+        threads=False,
+        progress=False,
+    )
+    recovered = []
+    if retry_data is not None and not retry_data.empty:
+      # yfinance 1.x tek hisse için de (Ticker, Price) MultiIndex döndürür
+      is_multi = isinstance(retry_data.columns, pd.MultiIndex)
+      for t in failed_tickers:
+        try:
+          if is_multi:
+            if t not in retry_data.columns.get_level_values(0):
+              continue
+            sub = retry_data[t]
+          else:
+            sub = retry_data
+          sub = sub.reindex(data.index)
+          if "Close" not in sub.columns or sub["Close"].notna().sum() == 0:
+            continue
+          # Kolon kolon yaz: hem mevcut (NaN) hem de hiç olmayan ticker için çalışır
+          for col in sub.columns:
+            data[(t, col)] = sub[col]
+          recovered.append(t)
+        except Exception as e:
+          print(f"      [!] {t} tekrar verisi yazılamadı: {e}")
+    print(
+        f"      -> Tekrar denemede kurtarılan: {len(recovered)}/{len(failed_tickers)}"
+        + (f" {recovered}" if recovered else "")
+    )
+
   market_regime, vix_val = get_market_regime(data)
   print(f"      Macro Market Regime: {market_regime} (^VIX: {vix_val:.1f})")
 
   etf_10d_ret = {}
   for etf in all_etfs:
     try:
-      c = data[etf]["Close"].dropna()
+      # Hisse tarafındaki pre-market boş mum temizliğinin aynısı (10G getiriler aynı güne bitsin)
+      c = drop_phantom_bar(data[etf].dropna(subset=["Close"]))["Close"]
       etf_10d_ret[etf] = (float(c.iloc[-1]) / float(c.iloc[-11])) - 1.0
     except Exception:
       etf_10d_ret[etf] = 0.0
 
   pullbacks = []
+  tech_errors = []
   for t in tickers:
     try:
       if t not in data:
@@ -600,7 +682,6 @@ def run_scanner(
         continue
       df["Volume"] = df["Volume"].fillna(0)
 
-      # Pre-market saatlerinde Yahoo bugünün tarihine Volume=0 olan boş mum atarsa onu temizle
       if float(df["Volume"].iloc[-1]) == 0 and len(df) > 201:
         df = df.iloc[:-1]
 
@@ -621,7 +702,7 @@ def run_scanner(
       ret_10d = (curr_price / float(close.iloc[-11])) - 1.0
       ret_20d = (curr_price / float(close.iloc[-21])) - 1.0
       prev_ret_10d = (prev_price / float(close.iloc[-12])) - 1.0
-      high_20d = float(high.iloc[-21:].max())
+      high_20d = float(high.iloc[-20:].max())
       upside_to_high = ((high_20d / curr_price) - 1.0) * 100
 
       tr = pd.concat(
@@ -750,14 +831,27 @@ def run_scanner(
           "Reward_%": reward_pct,
           "RR_Ratio": rr_ratio,
       })
-    except Exception:
+    except Exception as e:
+      tech_errors.append(f"{t}({type(e).__name__})")
       continue
 
+  if tech_errors:
+    print(
+        f"      [!] Teknik hesaplamada hata veren {len(tech_errors)} hisse"
+        f" atlandı: {', '.join(tech_errors[:15])}"
+        + (" ..." if len(tech_errors) > 15 else "")
+    )
   print(
       f"[2/3] {len(pullbacks)} passed technicals. Auditing Earnings, Revenue"
       " Growth, Bellwethers & 21D Analyst Actions..."
   )
   bw_dates = get_bellwether_earnings(today_naive)
+  bw_missing = [bw for bw in BELLWETHERS if bw not in bw_dates]
+  if bw_missing:
+    print(
+        "      [!] Bellwether bilanço tarihi alınamadı: "
+        f"{', '.join(bw_missing)} -> çakışma yoksa BW_Overlap 'Unverified' yazılır."
+    )
   candidates = []
 
   drop_stats = {
@@ -767,16 +861,19 @@ def run_scanner(
       "fund_target": 0,
       "api_err": 0,
   }
+  er_debug_notes = []
 
   for row in pullbacks:
     t = row["Ticker"]
     try:
       tk = yf.Ticker(t)
+      time.sleep(0.15)  # Yahoo rate-limit koruması
 
       # AŞAMA 2A: Bilanço penceresi ve 4 ayrı çeyrek beat kontrolü
       ed = tk.get_earnings_dates(limit=16)
       if ed is None or ed.empty:
         drop_stats["er_window"] += 1
+        er_debug_notes.append(f"{t}(NoData)")
         continue
 
       ed = ed.copy()
@@ -785,6 +882,7 @@ def run_scanner(
       future_er = ed[ed.index >= today_naive].sort_index(ascending=True)
       if future_er.empty:
         drop_stats["er_window"] += 1
+        er_debug_notes.append(f"{t}(NoFutureER)")
         continue
       next_er = future_er.index[0]
       next_er_str = next_er.strftime("%Y-%m-%d")
@@ -796,11 +894,10 @@ def run_scanner(
       exit_str = planned_exit_bday.strftime("%Y-%m-%d")
 
       # Çıkış günü kapanışına kadar elde tutulan toplam işlem günü (bugün/giriş günü dahil +1)
-      hold_trading_days = (
-          int(np.busday_count(today_str, exit_str)) + 1
-      )
-      if not (4 <= hold_trading_days <= 14):
+      hold_trading_days = int(np.busday_count(today_str, exit_str)) + 1
+      if not (4 <= hold_trading_days <= 21):
         drop_stats["er_window"] += 1
+        er_debug_notes.append(f"{t}(ER:{next_er_str},Hold:{hold_trading_days}d)")
         continue
 
       # En az 35 gün aralıklı gerçek son 4 çeyreği seç (Duplicate date korumalı)
@@ -815,7 +912,7 @@ def run_scanner(
         continue
 
       # AŞAMA 2B: Derin temel veri & analist revizyon kontrolü
-      time.sleep(0.12)
+      time.sleep(0.15)
 
       eps_cut = False
       try:
@@ -856,7 +953,12 @@ def run_scanner(
       row["Earnings_Date"] = next_er_str
       row["Hold_Days"] = hold_trading_days
       row["Exit_Date"] = exit_str
-      row["BW_Overlap"] = ", ".join(bw_overlap[:3]) if bw_overlap else "Clear"
+      if bw_overlap:
+        row["BW_Overlap"] = ", ".join(bw_overlap[:3])
+      elif bw_missing:
+        row["BW_Overlap"] = f"Unverified(no data: {'/'.join(bw_missing)})"
+      else:
+        row["BW_Overlap"] = "Clear"
       row["Beats_4Q"] = f"{beats}/4"
       row["Avg_Surp_%"] = avg_surp
 
@@ -878,13 +980,17 @@ def run_scanner(
       f" EPS Cut: -{drop_stats['eps_cut']} | Growth/Target:"
       f" -{drop_stats['fund_target']} | API Err: -{drop_stats['api_err']}"
   )
+  if er_debug_notes:
+    print(f"      [i] ER Window Drops: {', '.join(er_debug_notes)}")
 
   res_df = pd.DataFrame(candidates)
   if not res_df.empty:
     res_df = res_df.sort_values(
         by=["Setup_Score_70", "Hold_Days"], ascending=[False, True]
     )
-    filename = f"candidates_v4_4_{today_str}.csv"
+    filename = (
+        f"candidates_{SCANNER_VERSION.replace('.', '_')}_{today_str}.csv"
+    )
     res_df.to_csv(filename, index=False)
     print(
         f"[3/3] Saved {len(res_df)} institutional-grade setups to {filename}\n"
@@ -905,12 +1011,37 @@ def run_scanner(
         "Setup_Score_70",
     ]
     print(res_df[display_cols].to_string(index=False))
+    if not market_regime.startswith("GREEN"):
+      print(
+          f"\n[!] Macro Regime: {market_regime} — rejim filtrelemeye/puana"
+          " dahil değildir; pozisyon boyutunu buna göre ayarlayın."
+      )
   else:
     print(
-        "\nNo candidates passed the v4.4 filters today (Macro Regime:"
-        f" {market_regime})."
+        f"\nNo candidates passed the {SCANNER_VERSION} filters today (Macro"
+        f" Regime: {market_regime})."
     )
 
 
 if __name__ == "__main__":
   run_scanner()
+
+# scanner v4.6 - Latest: 14 days to 21 days update.
+# scanner v4.7 - Stress-test fixes:
+#   - Nasdaq-100 source moved to "List of NASDAQ-100 companies" (ICB -> GICS); the old
+#     page had no constituent table, so ARM/ASML/MELI/PDD/SHOP etc. were never scanned.
+#   - Sub-ETF mapping: gas/oil -> XOP only for Energy (Industrial Gases -> XLB, Gas
+#     Utilities -> XLU); Retail REITs -> XLRE; Financial Exchanges -> XLF; Pharma and
+#     Life Sciences Tools -> XLV (only Biotechnology -> XBI). Cached Sub_ETF recomputed.
+#   - infer_sector_from_sub uses word-start matching ("credit" no longer = IT).
+#   - Failed-ticker retry now actually writes data back (single ticker was a silent no-op).
+#   - Analyst_21D: negative events listed first (+N more), standing Sell/Underweight
+#     labelled Sell_Rating instead of Downgrade, PT=0 treated as missing, firm dedupe on
+#     full name, added Accumulate/Top Pick/Sector Weight/Market Weight/Perform/Mixed,
+#     grade dates converted UTC -> New York, fetch errors shown as "Error" not "Quiet".
+#   - Silent failures now visible: regime UNKNOWN instead of fake GREEN/16, BW_Overlap
+#     "Unverified" when bellwether dates missing, technical-loop errors listed.
+#   - ETF/SPY 10D returns drop the same pre-market zero-volume candle as stocks.
+#   - Warning when run during market hours (partial daily candle).
+#   - 20D high now uses 20 bars (was 21). Version in banner/filename/messages = v4.7.
+#   - Not changed by design: exit dates skip weekends only (holidays handled manually).

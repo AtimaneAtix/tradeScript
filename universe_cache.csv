@@ -268,7 +268,6 @@ J,Industrials,Construction & Engineering,XLI
 JNJ,Health Care,Pharmaceuticals,XBI
 JCI,Industrials,Building Products,ITB
 JPM,Financials,Diversified Banks,KBE
-KVUE,Consumer Staples,Personal Care Products,XLP
 KDP,Consumer Staples,Soft Drinks & Non-alcoholic Beverages,XLP
 KEY,Financials,Regional Banks,KBE
 KEYS,Information Technology,Electronic Equipment & Instruments,XLK
@@ -346,6 +345,7 @@ NVR,Consumer Discretionary,Homebuilding,ITB
 NXPI,Information Technology,Semiconductors,SMH
 ORLY,Consumer Discretionary,Automotive Retail,XRT
 OXY,Energy,Oil & Gas Exploration & Production,XOP
+OKTA,Information Technology,Application Software,IGV
 ODFL,Industrials,Cargo Ground Transportation,XLI
 OMC,Communication Services,Advertising,XLC
 ON,Information Technology,Semiconductors,SMH

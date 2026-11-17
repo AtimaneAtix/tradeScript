@@ -116,9 +116,9 @@ A critical methodological principle of `v4.1` is **never penalizing a stock's se
 ### 3.4 Stage 3: Fundamental Catalyst, Revision Velocity & Trading-Day Window
 
 1. **Strict US Business Trading Day Window ($T-3$ Exit Rule):**
-   Using `numpy.busday_count` and `pandas.bdate_range`, the scanner requires the upcoming earnings date ($T_{\text{ER}}$) to sit between **6 and 20 US trading days** from today. The mandatory exit date is defined strictly in business days:
+   Using `numpy.busday_count` and `pandas.bdate_range`, the scanner requires the upcoming earnings date ($T_{\text{ER}}$) to sit between **7 and 24 US trading days** (v4.7) from today. The mandatory exit date is defined strictly in business days:
    $$T_{\text{Exit}} = T_{\text{ER}} - 3 \text{ US Trading Days}$$
-   This guarantees $T_{\text{Exit}}$ never falls on a weekend and provides a clean **4 to 14 US trading day holding window** (`Hold_Days`).
+   This guarantees $T_{\text{Exit}}$ never falls on a weekend (exchange holidays are not skipped) and provides a **4 to 21 US trading day holding window** (v4.7; was 4 to 14) (`Hold_Days`).
 2. **Historical Earnings Beat Track Record:**
    Evaluates the last 4 reported quarters (`Beats_4Q` $\ge 3/4$, with $4/4$ preferred, and average EPS surprise $< 200\%$ to exclude penny base-effect distortions).
 3. **30-Day Consensus EPS Revision Gate (`eps_trend`):**
