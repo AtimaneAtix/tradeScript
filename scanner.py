@@ -44,7 +44,12 @@ ICB_TO_GICS_SECTOR = {
     "Utilities": "Utilities",
 }
 
-SCANNER_VERSION = "v4.7"
+SCANNER_VERSION = "v4.8"
+
+# Trade plan (v4.8, research/trade_plan.py ile 2016-2026 geriye dönük test edildi)
+STOP_ATR_MULT = 2.5  # Hard stop = sinyal kapanışı - 2.5 x ATR14 (eski: 1.5)
+EXIT_BDAYS_BEFORE_ER = 3  # T-3 çıkış; T-2 için 2 yapın (en yakın izin verilen)
+# Sabit kâr hedefi yok: pozisyon stop olmazsa Exit_Date kapanışına kadar tutulur.
 BELLWETHERS = ["MSFT", "AAPL", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
 CACHE_FILE = "universe_cache.csv"
 CUSTOM_TICKERS_FILE = "custom_tickers.txt"
@@ -799,11 +804,10 @@ def run_scanner(
       else:
         trigger_status = "Knife_Wait"
 
-      hard_stop = round(curr_price - (1.5 * atr_14), 2)
-      early_target = round(curr_price + (0.75 * (high_20d - curr_price)), 2)
+      hard_stop = round(curr_price - (STOP_ATR_MULT * atr_14), 2)
       risk_pct = round(((curr_price - hard_stop) / curr_price) * 100, 2)
-      reward_pct = round(((early_target - curr_price) / curr_price) * 100, 2)
-      rr_ratio = round(reward_pct / risk_pct, 2) if risk_pct > 0 else 0.0
+      # Hesabın %1'ini riske ederken pozisyonun hesap içindeki payı (geniş stop -> küçük pozisyon)
+      pos_pct_1r = round(100.0 / risk_pct, 1) if risk_pct > 0 else 0.0
 
       info = universe[t]
       sub_etf = info["Sub_ETF"]
@@ -826,10 +830,8 @@ def run_scanner(
           "Inst_Footprint": inst_footprint,
           "Trigger_Status": trigger_status,
           "Hard_Stop_Price": hard_stop,
-          "Early_Target_Price": early_target,
           "Risk_%": risk_pct,
-          "Reward_%": reward_pct,
-          "RR_Ratio": rr_ratio,
+          "Pos_%_per_1%_Risk": pos_pct_1r,
       })
     except Exception as e:
       tech_errors.append(f"{t}({type(e).__name__})")
@@ -887,8 +889,10 @@ def run_scanner(
       next_er = future_er.index[0]
       next_er_str = next_er.strftime("%Y-%m-%d")
 
-      # Sadece hafta sonlarını düşen standart iş günü hesabı (Bilançodan 3 iş günü önce çıkış: T-3)
-      planned_exit_bday = pd.bdate_range(end=next_er, periods=4, freq="B")[
+      # Sadece hafta sonlarını düşen standart iş günü hesabı (Bilançodan N iş günü önce çıkış: T-N)
+      planned_exit_bday = pd.bdate_range(
+          end=next_er, periods=EXIT_BDAYS_BEFORE_ER + 1, freq="B"
+      )[
           0
       ].normalize()
       exit_str = planned_exit_bday.strftime("%Y-%m-%d")
@@ -1006,15 +1010,17 @@ def run_scanner(
         "Hold_Days",
         "Exit_Date",
         "BW_Overlap",
-        "RR_Ratio",
+        "Hard_Stop_Price",
+        "Risk_%",
         "Analyst_21D",
         "Setup_Score_70",
     ]
     print(res_df[display_cols].to_string(index=False))
     if not market_regime.startswith("GREEN"):
       print(
-          f"\n[!] Macro Regime: {market_regime} — rejim filtrelemeye/puana"
-          " dahil değildir; pozisyon boyutunu buna göre ayarlayın."
+          f"\n[i] Macro Regime: {market_regime} — bilgi amaçlı, filtre/puana dahil"
+          " değil. (2016-26 testi: RED dönem sinyalleri mutlak getiride zayıf değil,"
+          " ama dalgalanma ve boşluk (gap) riski daha yüksek.)"
       )
   else:
     print(
@@ -1045,3 +1051,13 @@ if __name__ == "__main__":
 #   - Warning when run during market hours (partial daily candle).
 #   - 20D high now uses 20 bars (was 21). Version in banner/filename/messages = v4.7.
 #   - Not changed by design: exit dates skip weekends only (holidays handled manually).
+# scanner v4.8 - Trade plan from 10-year backtest (research/trade_plan.py, 3,844 trades):
+#   - Hard stop widened 1.5 -> 2.5 ATR (STOP_ATR_MULT). Same return per unit of risk,
+#     far fewer noise stop-outs (47% -> 27%), smoother results.
+#   - Fixed profit target removed (Early_Target_Price / Reward_% / RR_Ratio dropped): the
+#     75%-to-20D-high target capped winners and lowered returns in every tested variant.
+#     Plan is now: hold to Exit_Date close unless the hard stop is hit.
+#   - New column Pos_%_per_1%_Risk = position size (% of account) when risking 1%.
+#   - Exit day is a constant (EXIT_BDAYS_BEFORE_ER = 3; 2 = T-2 is the closest allowed).
+#   Backtest, same signals: +0.039R per trade vs the v4.7 plan (2.4 SE), better in 8/12
+#   years; equal-money avg per trade +0.49% -> +1.09%.

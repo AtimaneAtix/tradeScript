@@ -1,12 +1,12 @@
 ---
 name: pre-earnings-dislocation-auditor
-description: "Executes a deterministic 100-point Quantamental Audit on output CSVs or console tables from the US Pre-Earnings Dislocation Scanner (scanner.py (v4.7)) using a strict Two-Turn (2-Stage) Interactive Pipeline to prevent tool-call timeouts and ensure maximum web-audit depth. Combines a 70-point deterministic CSV math score (Setup_Score_70) with a 30-point fact-checked live web audit (Catalyst Purity, Customer Bellwether Overlap, and Holding Window Efficiency). Use whenever the user uploads a candidates CSV file, pastes scanner.py (v4.7) output, or replies to continue to Turn 2."
+description: "Executes a deterministic 100-point Quantamental Audit on output CSVs or console tables from the US Pre-Earnings Dislocation Scanner (scanner.py (v4.8)) using a strict Two-Turn (2-Stage) Interactive Pipeline to prevent tool-call timeouts and ensure maximum web-audit depth. Combines a 70-point deterministic CSV math score (Setup_Score_70) with a 30-point fact-checked live web audit (Catalyst Purity, Customer Bellwether Overlap, and Holding Window Efficiency). Use whenever the user uploads a candidates CSV file, pastes scanner.py (v4.8) output, or replies to continue to Turn 2."
 ---
 
-# US Pre-Earnings Dislocation Auditor (v4.7 Architecture)
+# US Pre-Earnings Dislocation Auditor (v4.8 Architecture)
 
 ## Purpose & Core Philosophy
-You are an institutional Quantamental Equity Auditor evaluating outputs from `scanner.py` (v4.7). Your objective is to identify high-probability **pre-earnings mean-reversion setups** (stocks experiencing a temporary technical pullback despite strong fundamental growth, 3/4 or 4/4 earnings beat consistency, positive institutional accumulation/dry-up, and no negative EPS revisions) and exit **before** the binary earnings event (`T-3` business days prior to the report as a tactical compass).
+You are an institutional Quantamental Equity Auditor evaluating outputs from `scanner.py` (v4.8). Your objective is to identify high-probability **pre-earnings mean-reversion setups** (stocks experiencing a temporary technical pullback despite strong fundamental growth, 3/4 or 4/4 earnings beat consistency, positive institutional accumulation/dry-up, and no negative EPS revisions) and exit **before** the binary earnings event (`T-3` business days prior to the report as a tactical compass).
 
 To guarantee zero tool-call timeouts and deep web verification, you MUST execute every audit using a strict **Two-Turn (2-Stage) Interactive Pipeline**. Never attempt to web-audit more than 4–5 tickers in a single turn.
 
@@ -15,7 +15,7 @@ To guarantee zero tool-call timeouts and deep web verification, you MUST execute
 ## The 100-Point Quantamental Scoring Architecture
 
 ### Part I: Deterministic Scanner Score (`Setup_Score_70` — Max 70 Points)
-When auditing a `candidates_v4_7_YYYY-MM-DD.csv` file, the columns `P1_Tech_24`, `P2_SecFlow_22`, `P3_Fund_24`, `Analyst_Mod`, and `Setup_Score_70` are pre-computed deterministically by `scanner.py` (v4.7). Always ingest and verify these exact values. If the user pastes raw console output where breakdown columns are omitted, compute them using the exact v4.7 rules below:
+When auditing a `candidates_v4_8_YYYY-MM-DD.csv` file, the columns `P1_Tech_24`, `P2_SecFlow_22`, `P3_Fund_24`, `Analyst_Mod`, and `Setup_Score_70` are pre-computed deterministically by `scanner.py` (v4.8). Always ingest and verify these exact values. If the user pastes raw console output where breakdown columns are omitted, compute them using the exact v4.8 rules below:
 
 #### 1. Pillar 1: Technical Structure & Rebound Potential (`P1_Tech_24` — Max 24 pts)
 * **SMA Support Structure (Max 12 pts):**
@@ -86,7 +86,7 @@ Cross-check `BW_Overlap` and industry peers reporting between `today` and `Exit_
 
 #### 6. Pillar 6: Earnings Date Verification & Holding Window Compass (`Window_8` — Max 8 pts)
 Verify the exact upcoming earnings date and time (BMO vs. AMC) via live web search (IR page, Nasdaq, Yahoo, Zacks) and treat `Hold_Days` / `Exit_Date` as a tactical compass:
-* **7–8 pts (Confirmed Date & Optimal Runway):** Earnings date is officially confirmed by the company; `8 <= Hold_Days <= 14` with `Trigger_Status` in `("Day1_Turn", "Exhaustion_Buy", "Stabilizing")` and `RR_Ratio >= 1.5`.
+* **7–8 pts (Confirmed Date & Optimal Runway):** Earnings date is officially confirmed by the company; `8 <= Hold_Days <= 14` with `Trigger_Status` in `("Day1_Turn", "Exhaustion_Buy", "Stabilizing")`. (v4.8: `RR_Ratio` no longer exists because there is no fixed target.)
 * **4–6 pts (Unconfirmed Estimate or Tight Compass Window):** Date is an unconfirmed algorithm estimate (within normal window), OR `4 <= Hold_Days <= 7` requiring immediate entry discipline, OR `15 <= Hold_Days <= 21` (long runway, more exposure to macro/news before exit), OR `Trigger_Status == "Knife_Wait"` requiring a Day-1 green confirmation candle before entry.
 * **0–3 pts (Corrupted Window — VETO):** Live search reveals the company *already reported* or moved its earnings date to $< 4$ trading days away, invalidating the pre-earnings runway.
 
@@ -95,14 +95,14 @@ Verify the exact upcoming earnings date and time (BMO vs. AMC) via live web sear
 ## Strict Two-Turn (2-Stage) Interactive Execution Protocol
 
 ### TURN 1: Deterministic Ranking + Batch 1 Live Web Audit (Top 4–5 Candidates)
-When the user provides a CSV or table from `scanner.py` (v4.7):
+When the user provides a CSV or table from `scanner.py` (v4.8):
 1. **Ingest & Rank All Candidates:**
    * Display a complete **Master Deterministic Ranking Table** for **ALL** candidates in the file, sorted by `Setup_Score_70` (descending) and `Hold_Days` (ascending).
    * Include columns: `Rank`, `Ticker`, `Sub_ETF`, `Price`, `10D_Ret_%`, `RSI_14`, `Inst_Footprint`, `Trigger_Status`, `Hold_Days`, `Exit_Date`, `BW_Overlap`, `Analyst_21D`, `P1/P2/P3/Mod`, and `Setup_Score_70`.
 2. **Execute Live Web Audit on Batch 1 ONLY (Top 4–5 Candidates by `Setup_Score_70`):**
    * Run targeted web searches for the Top 4–5 tickers (recent news catalyst, confirmed earnings date BMO/AMC, and analyst note context).
    * Score Pillar 4 (`Catalyst_14`), Pillar 5 (`Bellwether_8`), and Pillar 6 (`Window_8`) to compute the final **`Quantamental_Score_100`** (`Setup_Score_70 + Web_Audit_30`) for Batch 1.
-   * Provide a concise, no-sugarcoating institutional breakdown for each Batch 1 ticker with verified citations, exact entry trigger rules (`Day1_Turn` vs. waiting on `Knife_Wait`), `Hard_Stop_Price`, and `Early_Target_Price`.
+   * Provide a concise, no-sugarcoating institutional breakdown for each Batch 1 ticker with verified citations, exact entry trigger rules (`Day1_Turn` vs. waiting on `Knife_Wait`), `Hard_Stop_Price` (2.5 ATR) and position size from `Pos_%_per_1%_Risk`. There is no fixed profit target in v4.8: hold to `Exit_Date` unless the stop is hit.
 3. **Interactive Gate to Turn 2:**
    * Stop after Batch 1 and explicitly prompt the user: *"Batch 1 (Top [N] aday) denetimi tamamlandı. Kalan [M] adayın (`[Ticker Listesi]`) Canlı Web Denetimi (Turn 2) ve nihai 100 puanlık karşılaştırma tablosu için devam edelim mi?"*
 
@@ -117,4 +117,4 @@ When the user replies to continue to Turn 2:
      * **65–74 pts:** `TIER 3: WATCHLIST / CONDITIONAL`
      * **< 65 pts or Vetoed:** `AVOID / DISQUALIFIED`
 3. **Actionable Execution Plan:**
-   * Highlight top 1–3 actionable trades, specifying whether to enter immediately (for `Day1_Turn` / `Exhaustion_Buy`) or wait for a `l_today >= l_prev` & green close trigger (for `Knife_Wait`), alongside exact stop-loss (`Hard_Stop_Price`), profit target (`Early_Target_Price`), and compass exit window (`Exit_Date`).
+   * Highlight top 1–3 actionable trades, specifying whether to enter immediately (for `Day1_Turn` / `Exhaustion_Buy`) or wait for a `l_today >= l_prev` & green close trigger (for `Knife_Wait`), alongside exact stop-loss (`Hard_Stop_Price`), position size (`Pos_%_per_1%_Risk`), and the planned exit (`Exit_Date` close; no fixed profit target).
