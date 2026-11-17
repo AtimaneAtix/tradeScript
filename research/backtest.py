@@ -64,6 +64,7 @@ def indicators(b, high_window=20):
   d["sma200"] = c.rolling(200).mean()
   d["ret10"] = c / c.shift(10) - 1
   d["ret20"] = c / c.shift(20) - 1
+  d["mom126"] = (c.shift(21) / c.shift(126) - 1) * 100  # = scanner Mom_6M_%
   d["prev_ret10"] = c.shift(1) / c.shift(11) - 1
   d["high20"] = h.rolling(high_window).max()
   d["upside"] = (d["high20"] / c - 1) * 100
@@ -189,10 +190,13 @@ def build_signals(u, px, earn, high_window=20, exit_k=3, require_window=True,
           "Beats_4Q": f"{beats}/4" if beats is not None else "0/4",
           "Avg_Surp_%": surp if surp is not None else 0.0,
           "Rev_Growth_%": 0.0, "Target_Upside_%": 0.0,  # unknown historically -> fixed low
+          "RSI_14": round(r["rsi"], 1), "Mom_6M_%": round(r["mom126"], 1),
+          "Trigger_Status": r["trigger"],
       }
       p1, p2, p3, _ = S.compute_setup_score_breakdown(score_in, 0)
       row.update(
           Close=r["Close"], ATR=r["atr"], ATR_pct=r["atr_pct"], RSI=r["rsi"],
+          Mom126=r["mom126"],
           Vs50=r["vs50"], Vs100=r["vs100"], Upside=r["upside"], High20=r["high20"],
           Ret10=r["ret10"] * 100, Sub10=sub10 * 100, VolRatio=r["vol_ratio"],
           CMF=r["cmf10"], Footprint=r["footprint"], Trigger=r["trigger"],

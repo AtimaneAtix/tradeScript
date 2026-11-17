@@ -44,11 +44,12 @@ ICB_TO_GICS_SECTOR = {
     "Utilities": "Utilities",
 }
 
-SCANNER_VERSION = "v4.8"
+SCANNER_VERSION = "v4.10"
 
 # Trade plan (v4.8, research/trade_plan.py ile 2016-2026 geriye dönük test edildi)
 STOP_ATR_MULT = 2.5  # Hard stop = sinyal kapanışı - 2.5 x ATR14 (eski: 1.5)
 EXIT_BDAYS_BEFORE_ER = 3  # T-3 çıkış; T-2 için 2 yapın (en yakın izin verilen)
+EPS_CUT_MIN_PCT = 1.0  # v4.10: 0q EPS tahmini 30 günde en az %1 düşerse "kesinti" sayılır
 # Sabit kâr hedefi yok: pozisyon stop olmazsa Exit_Date kapanışına kadar tutulur.
 BELLWETHERS = ["MSFT", "AAPL", "NVDA", "GOOGL", "AMZN", "META", "TSLA"]
 CACHE_FILE = "universe_cache.csv"
@@ -515,46 +516,30 @@ def evaluate_analyst_21d(tk, today_naive, curr_price, target_upside_pct):
     return 0, f"Error({type(e).__name__})"
 
 
+def _tier_pts(x, best_max, mid_max, pts):
+  """Lower value is better: x <= best_max -> pts[0], x <= mid_max -> pts[1], else pts[2]."""
+  if pd.isna(x):
+    return pts[2]
+  return pts[0] if x <= best_max else (pts[1] if x <= mid_max else pts[2])
+
+
 def compute_setup_score_breakdown(row, analyst_mod):
-  """Returns (P1_Tech_24, P2_SecFlow_22, P3_Fund_24, Setup_Score_70)."""
-  v50, v100 = row["Vs_50SMA_%"], row["Vs_100SMA_%"]
-  if v50 >= -3.5 and v100 >= -2.5:
-    sma_pts = 12
-  elif v100 >= -5.5 and v50 >= -7.0:
-    sma_pts = 9
-  elif v100 >= -7.0 or v50 >= -9.0:
-    sma_pts = 6
-  else:
-    sma_pts = 3
+  """Returns (P1_Tech_24, P2_SecFlow_22, P3_Fund_24, Setup_Score_70).
 
-  up = row["Upside_20D_High_%"]
-  if up >= 18.0:
-    up_pts = 12
-  elif up >= 12.0:
-    up_pts = 9
-  elif up >= 8.5:
-    up_pts = 6
-  else:
-    up_pts = 3
-  p1_tech = sma_pts + up_pts
+  v4.9: P1 and P2 re-derived from a 2016-22 backtest and validated on 2023-26
+  (research/scoring_test.py). All four inputs score "deeper dislocation = better";
+  cut-offs are frozen in-sample terciles, equal weights (4 points per tier step).
+  P3 (beats, surprise, revenue growth, target upside) is unchanged.
+  """
+  # Pillar 1: Pullback depth (max 24) — less overbought + less extended prior run-up
+  rsi_pts = _tier_pts(row["RSI_14"], 38.75, 43.10, (12, 8, 4))
+  mom_pts = _tier_pts(row["Mom_6M_%"], 11.81, 22.96, (12, 8, 4))
+  p1_tech = rsi_pts + mom_pts
 
-  sub_ret, vs_sub = row["SubETF_10D_%"], row["Vs_SubETF_10D_%"]
-  if sub_ret > -5.0 and -7.0 <= vs_sub <= -0.5:
-    sec_pts = 12
-  elif sub_ret <= -8.0 and (v50 >= -3.5 or v100 >= -2.5):
-    sec_pts = 10
-  elif sub_ret > -9.0 and -9.0 <= vs_sub <= 1.0:
-    sec_pts = 8
-  else:
-    sec_pts = 5
-
-  flow = row["Inst_Footprint"]
-  flow_pts = (
-      10
-      if flow == "Accumulating"
-      else (8 if flow == "Quiet_DryUp" else (5 if flow == "Neutral" else 2))
-  )
-  p2_secflow = sec_pts + flow_pts
+  # Pillar 2: Sector dislocation + entry state (max 22)
+  sec_pts = _tier_pts(row["SubETF_10D_%"], -4.12, -1.20, (11, 7, 3))
+  trig_pts = 11 if row["Trigger_Status"] == "Knife_Wait" else 3
+  p2_secflow = sec_pts + trig_pts
 
   beats_pts = 8 if row["Beats_4Q"] == "4/4" else 4
   surp_pts = (
@@ -754,6 +739,8 @@ def run_scanner(
           float(vol.iloc[-25:-5].mean()) if len(vol) >= 25 else float(vol.mean())
       )
       vol_ratio = vol_5d / vol_20d if vol_20d > 0 else 1.0
+      # 6 aylık momentum, son 1 ay hariç (t-126 -> t-21): önceki yükselişin ne kadar uzadığı
+      mom_6m = (float(close.iloc[-22]) / float(close.iloc[-127]) - 1.0) * 100
 
       hl_range = (high - low).replace(0, np.nan)
       mfm = ((close - low) - (high - close)) / hl_range
@@ -822,6 +809,7 @@ def run_scanner(
           "SubETF_10D_%": round(sub_10d * 100, 2),
           "Vs_SubETF_10D_%": round((ret_10d - sub_10d) * 100, 2),
           "RSI_14": round(rsi_14, 1),
+          "Mom_6M_%": round(mom_6m, 1),
           "Vs_50SMA_%": round(vs_50, 1),
           "Vs_100SMA_%": round(((curr_price / sma_100) - 1.0) * 100, 1),
           "Upside_20D_High_%": round(upside_to_high, 1),
@@ -860,10 +848,19 @@ def run_scanner(
       "er_window": 0,
       "beats_surp": 0,
       "eps_cut": 0,
+      "fund_missing": 0,
       "fund_target": 0,
       "api_err": 0,
   }
   er_debug_notes = []
+  rejects = []  # v4.10: her elenen aday sebebi ve değerleriyle loglanır (ileri takip için)
+
+  def reject(row_, reason, **vals):
+    rejects.append({
+        "Ticker": row_["Ticker"], "Reason": reason, "Price": row_["Price"],
+        "RSI_14": row_["RSI_14"], "Trigger_Status": row_["Trigger_Status"],
+        "Hard_Stop_Price": row_["Hard_Stop_Price"], **vals,
+    })
 
   for row in pullbacks:
     t = row["Ticker"]
@@ -876,6 +873,7 @@ def run_scanner(
       if ed is None or ed.empty:
         drop_stats["er_window"] += 1
         er_debug_notes.append(f"{t}(NoData)")
+        reject(row, "ER_NoData")
         continue
 
       ed = ed.copy()
@@ -885,6 +883,7 @@ def run_scanner(
       if future_er.empty:
         drop_stats["er_window"] += 1
         er_debug_notes.append(f"{t}(NoFutureER)")
+        reject(row, "ER_NoFuture")
         continue
       next_er = future_er.index[0]
       next_er_str = next_er.strftime("%Y-%m-%d")
@@ -902,43 +901,63 @@ def run_scanner(
       if not (4 <= hold_trading_days <= 21):
         drop_stats["er_window"] += 1
         er_debug_notes.append(f"{t}(ER:{next_er_str},Hold:{hold_trading_days}d)")
+        reject(row, "ER_Window", Earnings_Date=next_er_str, Hold_Days=hold_trading_days)
         continue
 
       # En az 35 gün aralıklı gerçek son 4 çeyreği seç (Duplicate date korumalı)
       last_4 = get_distinct_past_4_quarters(ed, today_naive, min_gap_days=35)
+      win_info = {"Earnings_Date": next_er_str, "Exit_Date": exit_str,
+                  "Hold_Days": hold_trading_days}
       if len(last_4) < 4:
         drop_stats["beats_surp"] += 1
+        reject(row, "Beats_LessThan4Q", **win_info)
         continue
       beats = int((last_4 > 0).sum())
       avg_surp = round(float(last_4.mean()), 2)
       if beats < min_beats or avg_surp > 200.0:
         drop_stats["beats_surp"] += 1
+        reject(row, "Beats_Fail", Beats_4Q=f"{beats}/4", Avg_Surp_pct=avg_surp,
+               **win_info)
         continue
 
       # AŞAMA 2B: Derin temel veri & analist revizyon kontrolü
       time.sleep(0.15)
 
-      eps_cut = False
+      # v4.10: kesinti ancak anlamlıysa (>= %1 göreli) eler; eski kural %0.1'lik
+      # yuvarlama düzeltmelerini bile kesinti sayıyordu (canlı kontrol: 7 elemenin 5'i < %1)
+      eps_cut, eps_chg_pct = False, np.nan
       try:
         trend = tk.eps_trend
         if trend is not None and not trend.empty and "0q" in trend.index:
-          diff = trend.loc["0q", "current"] - trend.loc["0q", "30daysAgo"]
-          if pd.notna(diff) and diff < -0.001:
-            eps_cut = True
+          cur_e = float(trend.loc["0q", "current"])
+          prev_e = float(trend.loc["0q", "30daysAgo"])
+          if pd.notna(cur_e) and pd.notna(prev_e):
+            if abs(prev_e) >= 0.05:
+              eps_chg_pct = (cur_e - prev_e) / abs(prev_e) * 100
+              eps_cut = eps_chg_pct <= -EPS_CUT_MIN_PCT
+            else:  # ~0 EPS: yüzde anlamsız, 1 sentlik mutlak kesinti kullan
+              eps_cut = (cur_e - prev_e) <= -0.01
       except Exception:
         pass
+      win_info.update(Beats_4Q=f"{beats}/4", Avg_Surp_pct=avg_surp,
+                      EPS_0q_Chg_pct=round(eps_chg_pct, 2) if pd.notna(eps_chg_pct) else np.nan)
       if eps_cut:
         drop_stats["eps_cut"] += 1
+        reject(row, "EPS_Cut", **win_info)
         continue
 
       rev_growth_pct, target_upside = fetch_verified_fundamentals(
           tk, row["Price"]
       )
       if rev_growth_pct is None or target_upside is None:
-        drop_stats["fund_target"] += 1
+        drop_stats["fund_missing"] += 1
+        reject(row, "Fund_DataMissing", Rev_Growth_pct=rev_growth_pct,
+               Target_Upside_pct=target_upside, **win_info)
         continue
       if rev_growth_pct <= 0.0 or target_upside < 5.0:
         drop_stats["fund_target"] += 1
+        reject(row, "Fund_Threshold", Rev_Growth_pct=rev_growth_pct,
+               Target_Upside_pct=target_upside, **win_info)
         continue
 
       analyst_mod, analyst_note = evaluate_analyst_21d(
@@ -951,6 +970,7 @@ def run_scanner(
           if today_naive <= dt_bw <= planned_exit_bday and bw != t
       ]
 
+      row["EPS_0q_Chg_%"] = win_info["EPS_0q_Chg_pct"]
       row["Rev_Growth_%"] = rev_growth_pct
       row["Target_Upside_%"] = target_upside
       row["Analyst_21D"] = analyst_note
@@ -974,16 +994,22 @@ def run_scanner(
       row["Setup_Score_70"] = total_70
 
       candidates.append(row)
-    except Exception:
+    except Exception as e:
       drop_stats["api_err"] += 1
+      reject(row, f"API_Error({type(e).__name__})")
       continue
 
   print(
       "      Filter Breakdown -> ER Window:"
       f" -{drop_stats['er_window']} | Beats/Surp: -{drop_stats['beats_surp']} |"
       f" EPS Cut: -{drop_stats['eps_cut']} | Growth/Target:"
-      f" -{drop_stats['fund_target']} | API Err: -{drop_stats['api_err']}"
+      f" -{drop_stats['fund_target']} (data missing: -{drop_stats['fund_missing']}) |"
+      f" API Err: -{drop_stats['api_err']}"
   )
+  if rejects:
+    rej_file = f"rejects_{SCANNER_VERSION.replace('.', '_')}_{today_str}.csv"
+    pd.DataFrame(rejects).to_csv(rej_file, index=False)
+    print(f"      [i] {len(rejects)} elenen aday sebepleriyle {rej_file} dosyasına yazıldı.")
   if er_debug_notes:
     print(f"      [i] ER Window Drops: {', '.join(er_debug_notes)}")
 
@@ -1061,3 +1087,27 @@ if __name__ == "__main__":
 #   - Exit day is a constant (EXIT_BDAYS_BEFORE_ER = 3; 2 = T-2 is the closest allowed).
 #   Backtest, same signals: +0.039R per trade vs the v4.7 plan (2.4 SE), better in 8/12
 #   years; equal-money avg per trade +0.49% -> +1.09%.
+# scanner v4.9 - Scoring re-derived from data (research/scoring_test.py):
+#   - Old P1 (SMA proximity + upside) and P2 (sector context + Inst_Footprint) did not rank
+#     trades; in 2023-26 the old score's top picks did WORSE than the rest (-0.12R).
+#   - New P1_Tech_24 = RSI_14 (lower better) + Mom_6M_% (lower better), 12/8/4 each.
+#     New P2_SecFlow_22 = SubETF_10D_% (lower better) 11/7/3 + Trigger Knife_Wait 11, else 3.
+#   - Features and cut-offs chosen mechanically on 2016-22 only, tested once on 2023-26:
+#     top-2 per week beat the rest by +0.20R (2016-22: +0.28R). Equal weights.
+#   - P3 (beats/surprise/revenue/target) and Analyst_Mod unchanged (no history to test).
+#   - Average Setup_Score_70 kept ~equal to before so the SKILL.md tiers keep their meaning.
+#   - New column Mom_6M_% (return from t-126 to t-21). Inst_Footprint/CMF stay as info only.
+#   - Stored v4.4-v4.8 CSV scores are not comparable with v4.9 scores.# scanner v4.10 - Checked the parts the price backtest could not (research/components_test.py,
+#   analyst history 2015-26 with split-adjusted targets, point-in-time):
+#   - Analyst_Mod, target-upside points and the >= 5% target gate: no problem found
+#     (weakly positive, never harmful) -> unchanged.
+#   - EPS-cut filter: rejected stocks on rounding-level revisions (live check: 5 of 7
+#     rejections were cuts < 1%). Now needs a >= 1% relative cut (EPS_CUT_MIN_PCT), or
+#     >= 1 cent when the estimate is ~0. Judgment fix: no estimate history exists to test it.
+#   - New rejects_<version>_<date>.csv: every stage-2 rejection with reason and values, so
+#     the filters can be judged on live data later (research/tracker.py).
+#   - Growth/Target drops now split "data missing" from "failed threshold".
+#   - New column EPS_0q_Chg_% (30-day change of the current-quarter EPS estimate).
+#   - Revenue growth (SEC filings, point-in-time, matches Yahoo within 1pp for 90% of
+#     stocks): no measurable effect on these trades. The > 0 gate and Rev points stay
+#     unchanged (rejected stocks did slightly better, but within noise).

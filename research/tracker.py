@@ -230,5 +230,61 @@ def summarize(tr):
       print(f"    trigger {str(trig):15s}", _stats(g))
 
 
+def audit_and_rejects(tr):
+  """v4.10: judge the web audit (audit_*.csv) and the stage-2 filters (rejects_*.csv)."""
+  closed = tr[tr["Outcome"].isin(["STOP", "STOP_GAP", "TARGET", "EXIT_DATE"])]
+  closed = closed[closed["Mode"] == "immediate"]
+
+  audits = glob.glob(os.path.join(ROOT, "audit_*.csv"))
+  if audits:
+    a = pd.concat([pd.read_csv(f) for f in audits], ignore_index=True)
+    a["Scan_Date"] = pd.to_datetime(a["Scan_Date"]).dt.date
+    m = closed.merge(a, on=["Scan_Date", "Ticker"], how="inner")
+    print(f"\n== Web audit vs outcome ({len(m)} audited closed trades) ==")
+    if len(m):
+      for col in ["Tier", "Veto"]:
+        print(m.groupby(col)["Ret_%"].agg(["count", "mean", "median"]).round(2).to_string())
+      if m["Web_Audit_30"].notna().sum() > 5:
+        print("rank corr Web_Audit_30 vs return:",
+              round(m["Web_Audit_30"].rank().corr(m["Ret_%"].rank()), 3))
+  else:
+    print("\n(no audit_*.csv files yet: save the CSV block the SKILL prints after each audit)")
+
+  rej_files = glob.glob(os.path.join(ROOT, "rejects_*.csv"))
+  if not rej_files:
+    print("(no rejects_*.csv files yet: produced by scanner v4.10+)")
+    return
+  rows = []
+  for f in rej_files:
+    d = pd.read_csv(f)
+    d["Scan_Date"] = pd.Timestamp(re.search(r"(\d{4}-\d{2}-\d{2})", f).group(1))
+    rows.append(d)
+  rj = pd.concat(rows, ignore_index=True).dropna(subset=["Exit_Date"])
+  if rj.empty:
+    return
+  rj["Exit_Date"] = pd.to_datetime(rj["Exit_Date"])
+  today = pd.Timestamp.now(tz="America/New_York").tz_localize(None).normalize()
+  rj = rj[rj["Exit_Date"] < today]
+  if rj.empty:
+    print("(rejected candidates have not reached their exit dates yet)")
+    return
+  px = yf.download(sorted(set(rj.Ticker)), start=rj.Scan_Date.min() - pd.Timedelta(days=5),
+                   group_by="ticker", progress=False, auto_adjust=True)
+  out = []
+  for _, r in rj.iterrows():
+    if r.Ticker not in px.columns.get_level_values(0):
+      continue
+    bars = px[r.Ticker].dropna(subset=["Close"])
+    i = bars.index.searchsorted(r.Scan_Date)
+    res = simulate(bars, i, r.Hard_Stop_Price, None, r.Exit_Date) if i < len(bars) else None
+    if res:
+      out.append({"Reason": r.Reason, "Ret_%": (res[1] / res[3] - 1) * 100})
+  if out:
+    o = pd.DataFrame(out)
+    print("\n== Rejected candidates, had they been traded (scan-day open, hard stop, exit date) ==")
+    print(o.groupby("Reason")["Ret_%"].agg(["count", "mean", "median"]).round(2).to_string())
+    print(f"kept candidates (same period, immediate entry): mean {closed['Ret_%'].mean():.2f}%")
+
+
 if __name__ == "__main__":
-  run()
+  audit_and_rejects(run())
